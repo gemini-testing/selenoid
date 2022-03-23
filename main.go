@@ -292,7 +292,7 @@ var seleniumPaths = struct {
 
 func selenium() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc(seleniumPaths.CreateSession, post(queue.Try(queue.Check(queue.Protect(create)))))
+	mux.HandleFunc(seleniumPaths.CreateSession, post(queue.Protect(create)))
 	mux.HandleFunc(seleniumPaths.ProxySession, proxy)
 	mux.HandleFunc(paths.Status, status)
 	mux.HandleFunc(paths.Welcome, welcome)

@@ -2,11 +2,12 @@ package protect
 
 import (
 	"errors"
-	"github.com/aerokube/selenoid/info"
 	"log"
 	"math"
 	"net/http"
 	"time"
+
+	"github.com/aerokube/selenoid/info"
 
 	"github.com/aerokube/selenoid/jsonerror"
 )
@@ -20,32 +21,24 @@ type Queue struct {
 	used     chan struct{}
 }
 
-// Try - when X-Selenoid-No-Wait header is set
-// reply to client immediately if queue is full
-func (q *Queue) Try(next http.HandlerFunc) http.HandlerFunc {
+func (q *Queue) Protect(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		_, noWait := r.Header["X-Selenoid-No-Wait"]
+		tokenAcquired := false
 		select {
 		case q.limit <- struct{}{}:
-			<-q.limit
+			tokenAcquired = true
 		default:
+			tokenAcquired = false
+		}
+
+		if !tokenAcquired {
+			_, noWait := r.Header["X-Selenoid-No-Wait"]
 			if noWait {
 				err := errors.New(http.StatusText(http.StatusTooManyRequests))
 				jsonerror.UnknownError(err).Encode(w)
 				return
 			}
-		}
-		next.ServeHTTP(w, r)
-	}
-}
 
-// Check - if queue disabled
-func (q *Queue) Check(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case q.limit <- struct{}{}:
-			<-q.limit
-		default:
 			if q.disabled {
 				user, remote := info.RequestInfo(r)
 				log.Printf("[-] [QUEUE_IS_FULL] [%s] [%s]", user, remote)
@@ -54,27 +47,24 @@ func (q *Queue) Check(next http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 		}
-		next.ServeHTTP(w, r)
-	}
-}
 
-// Protect - handler to control limit of sessions
-func (q *Queue) Protect(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
 		user, remote := info.RequestInfo(r)
 		log.Printf("[-] [NEW_REQUEST] [%s] [%s]", user, remote)
 		s := time.Now()
 		go func() {
 			q.queued <- struct{}{}
 		}()
-		select {
-		case <-r.Context().Done():
-			<-q.queued
-			log.Printf("[-] [CLIENT_DISCONNECTED] [%s] [%s] [%s]", user, remote, time.Since(s))
-			return
-		case q.limit <- struct{}{}:
-			q.pending <- struct{}{}
+		if !tokenAcquired {
+			select {
+			case <-r.Context().Done():
+				<-q.queued
+				log.Printf("[-] [CLIENT_DISCONNECTED] [%s] [%s] [%s]", user, remote, time.Since(s))
+				return
+			case q.limit <- struct{}{}:
+				// Do nothing
+			}
 		}
+		q.pending <- struct{}{}
 		<-q.queued
 		log.Printf("[-] [NEW_REQUEST_ACCEPTED] [%s] [%s]", user, remote)
 		next.ServeHTTP(w, r)
