@@ -185,11 +185,11 @@ func (d *Docker) StartWithCancel() (*StartedService, error) {
 		removeContainer(ctx, cl, requestId, browserContainerId)
 		return nil, fmt.Errorf("inspect container %s: %s", browserContainerId, err)
 	}
-	_, ok := stat.NetworkSettings.Ports[selenium]
-	if !ok {
-		removeContainer(ctx, cl, requestId, browserContainerId)
-		return nil, fmt.Errorf("no bindings available for %v", selenium)
-	}
+	// _, ok := stat.NetworkSettings.Ports[selenium]
+	// if !ok {
+	// 	removeContainer(ctx, cl, requestId, browserContainerId)
+	// 	return nil, fmt.Errorf("no bindings available for %v", selenium)
+	// }
 	servicePort := d.Service.Port
 	pc := map[string]nat.Port{
 		servicePort:      selenium,
