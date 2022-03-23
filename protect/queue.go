@@ -35,15 +35,15 @@ func (q *Queue) Protect(next http.HandlerFunc) http.HandlerFunc {
 			_, noWait := r.Header["X-Selenoid-No-Wait"]
 			if noWait {
 				err := errors.New(http.StatusText(http.StatusTooManyRequests))
-				jsonerror.UnknownError(err).Encode(w)
+				jsonerror.TooManyRequests(err).Encode(w)
 				return
 			}
 
 			if q.disabled {
 				user, remote := info.RequestInfo(r)
 				log.Printf("[-] [QUEUE_IS_FULL] [%s] [%s]", user, remote)
-				err := errors.New("queue is full")
-				jsonerror.UnknownError(err).Encode(w)
+				err := errors.New("Queue Is Full")
+				jsonerror.TooManyRequests(err).Encode(w)
 				return
 			}
 		}
