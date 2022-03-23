@@ -221,7 +221,7 @@ func TestSumUsedTotalGreaterThanPending(t *testing.T) {
 	hf := func(_ http.ResponseWriter, _ *http.Request) {
 		time.Sleep(50 * time.Millisecond)
 	}
-	queuedHandlerFunc := queue.Try(queue.Check(queue.Protect(hf)))
+	queuedHandlerFunc := queue.Protect(hf)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", queuedHandlerFunc)
 
