@@ -40,6 +40,10 @@ func UnknownError(err error) *SeleniumError {
 	return newSeleniumError("unknown error", err, http.StatusInternalServerError)
 }
 
+func TooManyRequests(err error) *SeleniumError {
+	return newSeleniumError("too many requests", err, http.StatusTooManyRequests)
+}
+
 func (se *SeleniumError) Encode(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(se.Status)
