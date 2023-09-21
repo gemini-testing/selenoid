@@ -510,6 +510,7 @@ func startVideoContainer(ctx context.Context, cl *client.Client, requestId uint6
 	videoContainerImage := environ.VideoContainerImage
 	env := getEnv(service, caps)
 	env = append(env, fmt.Sprintf("FILE_NAME=%s", caps.VideoName))
+	env = append(env, fmt.Sprintf("BROWSER_CONTAINER_ID=%s", browserContainer.ID))
 	videoScreenSize := caps.VideoScreenSize
 	if videoScreenSize != "" {
 		env = append(env, fmt.Sprintf("VIDEO_SIZE=%s", videoScreenSize))
