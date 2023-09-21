@@ -520,7 +520,7 @@ func startVideoContainer(ctx context.Context, cl *client.Client, requestId uint6
 		env = append(env, fmt.Sprintf("FRAME_RATE=%d", videoFrameRate))
 	}
 	hostConfig := &ctr.HostConfig{
-		Binds:       []string{fmt.Sprintf("%s:/data:rw,z", getVideoOutputDir(environ))},
+		Binds:       append([]string{fmt.Sprintf("%s:/data:rw,z", getVideoOutputDir(environ))}, service.Service.Volumes...),
 		AutoRemove:  true,
 		NetworkMode: ctr.NetworkMode(environ.Network),
 	}
