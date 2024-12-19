@@ -54,6 +54,7 @@ func (m *HTTPTest) StartWithCancel() (*service.StartedService, error) {
 			Clipboard:  u.Host,
 			VNC:        u.Host,
 			Devtools:   u.Host,
+			BiDi:       u.Host,
 		},
 		Cancel: func() {
 			log.Println("Stopping HTTPTest Service...")
@@ -97,6 +98,41 @@ func (r With) Path(p string) string {
 	return fmt.Sprintf("%s%s", r, p)
 }
 
+func HandleWs(w http.ResponseWriter, r *http.Request) {
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(_ *http.Request) bool {
+			return true
+		},
+	}
+	c, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		panic(err)
+	}
+	defer c.Close()
+	for {
+		mt, message, err := c.ReadMessage()
+		if err != nil {
+			break
+		}
+		type req struct {
+			ID uint64 `json:"id"`
+		}
+		var r req
+		err = json.Unmarshal(message, &r)
+		if err != nil {
+			panic(err)
+		}
+		output, err := json.Marshal(r)
+		if err != nil {
+			panic(err)
+		}
+		err = c.WriteMessage(mt, output)
+		if err != nil {
+			break
+		}
+	}
+}
+
 func Selenium(nsp ...func(map[string]interface{})) http.Handler {
 	var lock sync.RWMutex
 	sessions := make(map[string]struct{})
@@ -119,6 +155,10 @@ func Selenium(nsp ...func(map[string]interface{})) http.Handler {
 		_ = json.NewEncoder(w).Encode(&ret)
 	})
 	mux.HandleFunc("/session/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Upgrade") != "" {
+			HandleWs(w, r)
+		}
+
 		u := strings.Split(r.URL.Path, "/")[2]
 		lock.RLock()
 		_, ok := sessions[u]
@@ -147,40 +187,9 @@ func Selenium(nsp ...func(map[string]interface{})) http.Handler {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("test-data"))
 	})
-	upgrader := websocket.Upgrader{
-		CheckOrigin: func(_ *http.Request) bool {
-			return true
-		},
-	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Upgrade") != "" {
-			c, err := upgrader.Upgrade(w, r, nil)
-			if err != nil {
-				panic(err)
-			}
-			defer c.Close()
-			for {
-				mt, message, err := c.ReadMessage()
-				if err != nil {
-					break
-				}
-				type req struct {
-					ID uint64 `json:"id"`
-				}
-				var r req
-				err = json.Unmarshal(message, &r)
-				if err != nil {
-					panic(err)
-				}
-				output, err := json.Marshal(r)
-				if err != nil {
-					panic(err)
-				}
-				err = c.WriteMessage(mt, output)
-				if err != nil {
-					break
-				}
-			}
+			HandleWs(w, r)
 		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("test-clipboard-value"))

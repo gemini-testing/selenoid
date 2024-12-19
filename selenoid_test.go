@@ -17,6 +17,7 @@ import (
 
 	ggr "github.com/aerokube/ggr/config"
 	"github.com/aerokube/selenoid/config"
+	"github.com/gorilla/websocket"
 	"github.com/mafredri/cdp"
 	"github.com/mafredri/cdp/rpcc"
 	assert "github.com/stretchr/testify/require"
@@ -975,6 +976,75 @@ func TestAddedSeCdpCapability(t *testing.T) {
 	c := cdp.NewClient(conn)
 	err = c.Page.Enable(ctx)
 	assert.NoError(t, err)
+
+	sessions.Remove(sessionId)
+	queue.Release()
+}
+
+func TestBidi(t *testing.T) {
+	manager = &HTTPTest{Handler: Selenium()}
+
+	resp, err := http.Post(With(srv.URL).Path("/wd/hub/session"), "", bytes.NewReader([]byte("{}")))
+	assert.NoError(t, err)
+	assert.Equal(t, resp.StatusCode, http.StatusOK)
+	var sess map[string]string
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&sess))
+
+	u := fmt.Sprintf("ws://%s/session/%s", srv.Listener.Addr().String(), sess["sessionId"])
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	dialer := websocket.Dialer{}
+	conn, _, err := dialer.DialContext(ctx, u, nil)
+	assert.NoError(t, err)
+	defer conn.Close()
+
+	sessions.Remove(sess["sessionId"])
+	queue.Release()
+}
+
+func TestAddedWebSockerUrlCapability(t *testing.T) {
+	fn := func(input map[string]interface{}) {
+		input["value"] = map[string]interface{}{
+			"sessionId":    input["sessionId"],
+			"capabilities": map[string]interface{}{"browserVersion": "some-version", "webSocketUrl": fmt.Sprintf("ws://localhost:4444/session/%s", input["sessionId"])},
+		}
+		delete(input, "sessionId")
+	}
+	manager = &HTTPTest{Handler: Selenium(fn)}
+
+	resp, err := http.Post(With(srv.URL).Path("/wd/hub/session"), "", bytes.NewReader([]byte("{}")))
+	assert.NoError(t, err)
+	assert.Equal(t, resp.StatusCode, http.StatusOK)
+	var sess map[string]interface{}
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&sess))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	rv, ok := sess["value"]
+	assert.True(t, ok)
+	value, ok := rv.(map[string]interface{})
+	assert.True(t, ok)
+	rc, ok := value["capabilities"]
+	assert.True(t, ok)
+	rs, ok := value["sessionId"]
+	assert.True(t, ok)
+	sessionId, ok := rs.(string)
+	assert.True(t, ok)
+	capabilities, ok := rc.(map[string]interface{})
+	assert.True(t, ok)
+	rws, ok := capabilities["webSocketUrl"]
+	assert.True(t, ok)
+	ws, ok := rws.(string)
+	assert.True(t, ok)
+	assert.NotEmpty(t, ws)
+
+	dialer := websocket.Dialer{}
+	conn, _, err := dialer.DialContext(ctx, ws, nil)
+	assert.NoError(t, err)
+	defer conn.Close()
 
 	sessions.Remove(sessionId)
 	queue.Release()
