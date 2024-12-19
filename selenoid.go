@@ -56,6 +56,11 @@ type sess struct {
 	id   string
 }
 
+type ReverseProxyOpts struct {
+	status          string
+	useOriginalPath bool
+}
+
 // TODO There is simpler way to do this
 func (r request) localaddr() string {
 	addr := r.Context().Value(http.LocalAddrContextKey).(net.Addr).String()
@@ -433,6 +438,16 @@ func processBody(input []byte, host string) ([]byte, string, error) {
 								c["se:cdpVersion"] = bv
 							}
 						}
+
+						if c["webSocketUrl"] != nil {
+							u, err := url.Parse(c["webSocketUrl"].(string))
+							if err != nil {
+								return nil, sessionId, fmt.Errorf("parse 'websocketUrl' from response: %v", err)
+							} else {
+								u.Host = host
+								c["webSocketUrl"] = u.String()
+							}
+						}
 					}
 				}
 			}
@@ -604,10 +619,14 @@ func defaultErrorHandler(requestId uint64) func(http.ResponseWriter, *http.Reque
 	}
 }
 
-func reverseProxy(hostFn func(sess *session.Session) string, status string) func(http.ResponseWriter, *http.Request) {
+func reverseProxy(hostFn func(sess *session.Session) string, opts ReverseProxyOpts) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		requestId := serial()
 		sid, remainingPath := splitRequestPath(r.URL.Path)
+		if opts.useOriginalPath {
+			remainingPath = r.URL.Path
+		}
+
 		sess, ok := sessions.Get(sid)
 		if ok {
 			select {
@@ -623,7 +642,7 @@ func reverseProxy(hostFn func(sess *session.Session) string, status string) func
 					r.URL.Scheme = "http"
 					r.URL.Host = hostFn(sess)
 					r.URL.Path = remainingPath
-					log.Printf("[%d] [%s] [%s] [%s]", requestId, status, sid, remainingPath)
+					log.Printf("[%d] [%s] [%s] [%s]", requestId, opts.status, sid, remainingPath)
 				},
 				ErrorHandler: defaultErrorHandler(requestId),
 			}).ServeHTTP(w, r)
