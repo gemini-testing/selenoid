@@ -3,8 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"github.com/aerokube/selenoid/info"
-	"github.com/docker/docker/api/types"
 	"log"
 	"net"
 	"net/url"
@@ -13,6 +11,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/aerokube/selenoid/info"
+	"github.com/docker/docker/api/types"
 
 	"github.com/aerokube/selenoid/config"
 	"github.com/aerokube/selenoid/session"
@@ -458,6 +459,7 @@ func getHostPort(env Environment, servicePort string, caps session.Caps, stat ty
 	}
 	hp := session.HostPort{
 		Selenium:   fn(servicePort, pc[servicePort]),
+		BiDi:       fn(servicePort, pc[servicePort]),
 		Fileserver: fn(ports.Fileserver, pc[ports.Fileserver]),
 		Clipboard:  fn(ports.Clipboard, pc[ports.Clipboard]),
 		Devtools:   fn(ports.Devtools, pc[ports.Devtools]),
