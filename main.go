@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/aerokube/selenoid/info"
-	"github.com/docker/docker/api"
 	"log"
 	"net"
 	"net/http"
@@ -18,6 +16,9 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/aerokube/selenoid/info"
+	"github.com/docker/docker/api"
 
 	ggr "github.com/aerokube/ggr/config"
 	"github.com/aerokube/selenoid/config"
@@ -389,9 +390,10 @@ func handler() http.Handler {
 	root.Handle(paths.VNC, websocket.Handler(vnc))
 	root.HandleFunc(paths.Logs, logs)
 	root.HandleFunc(paths.Video, video)
-	root.HandleFunc(paths.Download, reverseProxy(func(sess *session.Session) string { return sess.HostPort.Fileserver }, "DOWNLOADING_FILE"))
-	root.HandleFunc(paths.Clipboard, reverseProxy(func(sess *session.Session) string { return sess.HostPort.Clipboard }, "CLIPBOARD"))
-	root.HandleFunc(paths.Devtools, reverseProxy(func(sess *session.Session) string { return sess.HostPort.Devtools }, "DEVTOOLS"))
+	root.HandleFunc(paths.Download, reverseProxy(func(sess *session.Session) string { return sess.HostPort.Fileserver }, ReverseProxyOpts{status: "DOWNLOADING_FILE"}))
+	root.HandleFunc(paths.Clipboard, reverseProxy(func(sess *session.Session) string { return sess.HostPort.Clipboard }, ReverseProxyOpts{status: "CLIPBOARD"}))
+	root.HandleFunc(paths.Devtools, reverseProxy(func(sess *session.Session) string { return sess.HostPort.Devtools }, ReverseProxyOpts{status: "DEVTOOLS"}))
+	root.HandleFunc(seleniumPaths.ProxySession, reverseProxy(func(sess *session.Session) string { return sess.HostPort.BiDi }, ReverseProxyOpts{status: "BIDI", useOriginalPath: true}))
 	if enableFileUpload {
 		root.HandleFunc(paths.File, fileUpload)
 	}
