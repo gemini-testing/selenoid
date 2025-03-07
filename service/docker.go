@@ -142,6 +142,9 @@ func (d *Docker) StartWithCancel() (*StartedService, error) {
 	if len(d.Service.Sysctl) > 0 {
 		hostConfig.Sysctls = d.Service.Sysctl
 	}
+  if d.Environment.PidMode != "" {
+    hostConfig.PidMode = ctr.PidMode(d.Environment.PidMode)
+  }
 	cl := d.Client
 	env := getEnv(d.ServiceBase, d.Caps)
 	cfg := &ctr.Config{
@@ -526,6 +529,9 @@ func startVideoContainer(ctx context.Context, cl *client.Client, requestId uint6
 		AutoRemove:  true,
 		NetworkMode: ctr.NetworkMode(environ.Network),
 	}
+  if environ.PidMode != "" {
+    hostConfig.PidMode = ctr.PidMode(environ.PidMode)
+  }
 	browserContainerName := getContainerIP(environ.Network, browserContainer)
 	if environ.Network == DefaultContainerNetwork {
 		const defaultBrowserContainerName = "browser"

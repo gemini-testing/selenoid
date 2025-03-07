@@ -19,6 +19,7 @@ type Environment struct {
 	CPU                  int64
 	Memory               int64
 	Network              string
+	PidMode              string
 	Hostname             string
 	StartupTimeout       time.Duration
 	SessionDeleteTimeout time.Duration

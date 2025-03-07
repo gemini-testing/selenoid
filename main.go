@@ -47,6 +47,7 @@ var (
 	limit                    int
 	retryCount               int
 	containerNetwork         string
+	containerPid             string
 	sessions                 = session.NewMap()
 	confPath                 string
 	logConfPath              string
@@ -89,6 +90,7 @@ func init() {
 	flag.Var(&mem, "mem", "Containers memory limit e.g. 128m or 1g")
 	flag.Var(&cpu, "cpu", "Containers cpu limit as float e.g. 0.2 or 1.0")
 	flag.StringVar(&containerNetwork, "container-network", service.DefaultContainerNetwork, "Network to be used for containers")
+	flag.StringVar(&containerPid, "container-pid", "", "PID namespace to use for containers")
 	flag.BoolVar(&captureDriverLogs, "capture-driver-logs", false, "Whether to add driver process logs to Selenoid output")
 	flag.BoolVar(&disablePrivileged, "disable-privileged", false, "Whether to disable privileged container mode")
 	flag.StringVar(&videoOutputDir, "video-output-dir", "video", "Directory to save recorded video to")
@@ -162,6 +164,7 @@ func init() {
 		CPU:                  int64(cpu),
 		Memory:               int64(mem),
 		Network:              containerNetwork,
+		PidMode:              containerPid,
 		StartupTimeout:       serviceStartupTimeout,
 		SessionDeleteTimeout: sessionDeleteTimeout,
 		CaptureDriverLogs:    captureDriverLogs,
