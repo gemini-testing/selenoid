@@ -33,35 +33,36 @@ import (
 )
 
 var (
-	hostname                 string
-	disableDocker            bool
-	disableQueue             bool
-	enableFileUpload         bool
-	listen                   string
-	timeout                  time.Duration
-	maxTimeout               time.Duration
-	newSessionAttemptTimeout time.Duration
-	sessionDeleteTimeout     time.Duration
-	serviceStartupTimeout    time.Duration
-	gracefulPeriod           time.Duration
-	limit                    int
-	retryCount               int
-	containerNetwork         string
-	containerPid             string
-	sessions                 = session.NewMap()
-	confPath                 string
-	logConfPath              string
-	captureDriverLogs        bool
-	disablePrivileged        bool
-	videoOutputDir           string
-	videoRecorderImage       string
-	logOutputDir             string
-	saveAllLogs              bool
-	ggrHost                  *ggr.Host
-	conf                     *config.Config
-	queue                    *protect.Queue
-	manager                  service.Manager
-	cli                      *client.Client
+	hostname                  string
+	disableDocker             bool
+	disableQueue              bool
+	enableFileUpload          bool
+	listen                    string
+	timeout                   time.Duration
+	maxTimeout                time.Duration
+	newSessionAttemptTimeout  time.Duration
+	sessionDeleteTimeout      time.Duration
+	serviceStartupTimeout     time.Duration
+	gracefulPeriod            time.Duration
+	limit                     int
+	retryCount                int
+	containerNetwork          string
+	containerPid              string
+	containerGracefulShutdown bool
+	sessions                  = session.NewMap()
+	confPath                  string
+	logConfPath               string
+	captureDriverLogs         bool
+	disablePrivileged         bool
+	videoOutputDir            string
+	videoRecorderImage        string
+	logOutputDir              string
+	saveAllLogs               bool
+	ggrHost                   *ggr.Host
+	conf                      *config.Config
+	queue                     *protect.Queue
+	manager                   service.Manager
+	cli                       *client.Client
 
 	startTime = time.Now()
 
@@ -91,6 +92,7 @@ func init() {
 	flag.Var(&cpu, "cpu", "Containers cpu limit as float e.g. 0.2 or 1.0")
 	flag.StringVar(&containerNetwork, "container-network", service.DefaultContainerNetwork, "Network to be used for containers")
 	flag.StringVar(&containerPid, "container-pid", "", "PID namespace to use for containers")
+	flag.BoolVar(&containerGracefulShutdown, "container-graceful-shutdown", false, "Terminate containers gracefully with SIGTERM signal")
 	flag.BoolVar(&captureDriverLogs, "capture-driver-logs", false, "Whether to add driver process logs to Selenoid output")
 	flag.BoolVar(&disablePrivileged, "disable-privileged", false, "Whether to disable privileged container mode")
 	flag.StringVar(&videoOutputDir, "video-output-dir", "video", "Directory to save recorded video to")
@@ -165,6 +167,7 @@ func init() {
 		Memory:               int64(mem),
 		Network:              containerNetwork,
 		PidMode:              containerPid,
+		GracefulShutdown:     containerGracefulShutdown,
 		StartupTimeout:       serviceStartupTimeout,
 		SessionDeleteTimeout: sessionDeleteTimeout,
 		CaptureDriverLogs:    captureDriverLogs,

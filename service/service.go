@@ -20,6 +20,7 @@ type Environment struct {
 	Memory               int64
 	Network              string
 	PidMode              string
+	GracefulShutdown     bool
 	Hostname             string
 	StartupTimeout       time.Duration
 	SessionDeleteTimeout time.Duration
