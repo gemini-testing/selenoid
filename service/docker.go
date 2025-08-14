@@ -19,7 +19,6 @@ import (
 	"github.com/aerokube/selenoid/session"
 	ctr "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/strslice"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
@@ -105,6 +104,7 @@ func (d *Docker) StartWithCancel() (*StartedService, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid CPU limit: %v", err)
 	}
+
 	selenium := portConfig.SeleniumPort
 	fileserver := portConfig.FileserverPort
 	clipboard := portConfig.ClipboardPort
@@ -122,20 +122,29 @@ func (d *Docker) StartWithCancel() (*StartedService, error) {
 		NetworkMode:  ctr.NetworkMode(d.Network),
 		Tmpfs:        d.Service.Tmpfs,
 		ShmSize:      getShmSize(d.Service),
-		Privileged:   d.Privileged,
+		Privileged:   true,
+		Devices: []ctr.DeviceMapping{
+			{
+				PathOnHost:        "/dev/kvm",
+				PathInContainer:   "/dev/kvm",
+				CgroupPermissions: "rwm", // Read, Write, Mknod
+			},
+			// Можно добавить другие устройства, если нужно
+		},
 		Resources: ctr.Resources{
 			Memory:   mem,
 			NanoCPUs: cpu,
 		},
 		ExtraHosts: getExtraHosts(d.Service, d.Caps),
 	}
+	log.Printf("[PRIVILEGED] [%s]", d.Privileged)
 	hostConfig.PublishAllPorts = d.Service.PublishAllPorts
 	if len(d.Caps.DNSServers) > 0 {
 		hostConfig.DNS = d.Caps.DNSServers
 	}
-	if !d.Privileged {
-		hostConfig.CapAdd = strslice.StrSlice{sysAdmin}
-	}
+	// if !d.Privileged {
+	// 	hostConfig.CapAdd = strslice.StrSlice{sysAdmin}
+	// }
 	if len(d.ApplicationContainers) > 0 {
 		hostConfig.Links = d.ApplicationContainers
 	}
@@ -145,6 +154,8 @@ func (d *Docker) StartWithCancel() (*StartedService, error) {
 	if d.Environment.PidMode != "" {
 		hostConfig.PidMode = ctr.PidMode(d.Environment.PidMode)
 	}
+	log.Printf("[HOST_CONFIG]: %+v", hostConfig)
+	log.Printf("[HOST_CONFIG_2]: %#v", hostConfig)
 	cl := d.Client
 	env := getEnv(d.ServiceBase, d.Caps)
 	cfg := &ctr.Config{
