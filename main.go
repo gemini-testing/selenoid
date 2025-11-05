@@ -56,6 +56,7 @@ var (
 	disablePrivileged         bool
 	videoOutputDir            string
 	videoRecorderImage        string
+	videoContainerVolumes     string
 	logOutputDir              string
 	saveAllLogs               bool
 	ggrHost                   *ggr.Host
@@ -97,6 +98,7 @@ func init() {
 	flag.BoolVar(&disablePrivileged, "disable-privileged", false, "Whether to disable privileged container mode")
 	flag.StringVar(&videoOutputDir, "video-output-dir", "video", "Directory to save recorded video to")
 	flag.StringVar(&videoRecorderImage, "video-recorder-image", "selenoid/video-recorder:latest-release", "Image to use as video recorder")
+	flag.StringVar(&videoContainerVolumes, "video-container-volumes", "", "Additional volumes to mount in video container (comma-separated, e.g. '/tmp/.X11-unix:/tmp/.X11-unix:ro')")
 	flag.StringVar(&logOutputDir, "log-output-dir", "", "Directory to save session log to")
 	flag.BoolVar(&saveAllLogs, "save-all-logs", false, "Whether to save all logs without considering capabilities")
 	flag.DurationVar(&gracefulPeriod, "graceful-period", 300*time.Second, "graceful shutdown period in time.Duration format, e.g. 300s or 500ms")
@@ -161,21 +163,37 @@ func init() {
 
 	upload.Init()
 
+	// Parse video container volumes from flag or environment variable
+	var videoContainerVolumesList []string
+	if videoContainerVolumes == "" {
+		videoContainerVolumes = os.Getenv("VIDEO_CONTAINER_VOLUMES")
+	}
+	if videoContainerVolumes != "" {
+		volumes := strings.Split(videoContainerVolumes, ",")
+		for _, vol := range volumes {
+			vol = strings.TrimSpace(vol)
+			if vol != "" {
+				videoContainerVolumesList = append(videoContainerVolumesList, vol)
+			}
+		}
+	}
+
 	environment := service.Environment{
-		InDocker:             inDocker,
-		CPU:                  int64(cpu),
-		Memory:               int64(mem),
-		Network:              containerNetwork,
-		PidMode:              containerPid,
-		GracefulShutdown:     containerGracefulShutdown,
-		StartupTimeout:       serviceStartupTimeout,
-		SessionDeleteTimeout: sessionDeleteTimeout,
-		CaptureDriverLogs:    captureDriverLogs,
-		VideoOutputDir:       videoOutputDir,
-		VideoContainerImage:  videoRecorderImage,
-		LogOutputDir:         logOutputDir,
-		SaveAllLogs:          saveAllLogs,
-		Privileged:           !disablePrivileged,
+		InDocker:              inDocker,
+		CPU:                   int64(cpu),
+		Memory:                int64(mem),
+		Network:               containerNetwork,
+		PidMode:               containerPid,
+		GracefulShutdown:      containerGracefulShutdown,
+		StartupTimeout:        serviceStartupTimeout,
+		SessionDeleteTimeout:  sessionDeleteTimeout,
+		CaptureDriverLogs:     captureDriverLogs,
+		VideoOutputDir:        videoOutputDir,
+		VideoContainerImage:   videoRecorderImage,
+		VideoContainerVolumes: videoContainerVolumesList,
+		LogOutputDir:          logOutputDir,
+		SaveAllLogs:           saveAllLogs,
+		Privileged:            !disablePrivileged,
 	}
 	if disableDocker {
 		manager = &service.DefaultManager{Environment: &environment, Config: conf}
