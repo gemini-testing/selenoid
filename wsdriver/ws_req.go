@@ -60,7 +60,7 @@ var methodNames = [...]string{
 }
 
 func (rm RequestMethod) String() string {
-	if rm > 8 {
+	if rm >= RequestMethod(len(methodNames)) {
 		return "UNKNOWN"
 	}
 	return methodNames[rm]
