@@ -1050,6 +1050,52 @@ func TestAddedWebSockerUrlCapability(t *testing.T) {
 	queue.Release()
 }
 
+func TestAddedSeWsdriverCapability(t *testing.T) {
+	fn := func(input map[string]interface{}) {
+		input["value"] = map[string]interface{}{
+			"sessionId":    input["sessionId"],
+			"capabilities": map[string]interface{}{"browserVersion": "some-version"},
+		}
+		delete(input, "sessionId")
+	}
+	manager = &HTTPTest{Handler: Selenium(fn)}
+
+	resp, err := http.Post(With(srv.URL).Path("/wd/hub/session"), "", bytes.NewReader([]byte("{}")))
+	assert.NoError(t, err)
+	assert.Equal(t, resp.StatusCode, http.StatusOK)
+	var sess map[string]interface{}
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&sess))
+
+	rv, ok := sess["value"]
+	assert.True(t, ok)
+	value, ok := rv.(map[string]interface{})
+	assert.True(t, ok)
+	rc, ok := value["capabilities"]
+	assert.True(t, ok)
+	rs, ok := value["sessionId"]
+	assert.True(t, ok)
+	sessionId, ok := rs.(string)
+	assert.True(t, ok)
+	capabilities, ok := rc.(map[string]interface{})
+	assert.True(t, ok)
+
+	rwd, ok := capabilities["se:wsdriver"]
+	assert.True(t, ok)
+	wd, ok := rwd.(string)
+	assert.True(t, ok)
+	assert.Contains(t, wd, "ws://")
+	assert.Contains(t, wd, fmt.Sprintf("/wsdriver/%s/", sessionId))
+
+	rwdv, ok := capabilities["se:wsdriverVersion"]
+	assert.True(t, ok)
+	wdv, ok := rwdv.(string)
+	assert.True(t, ok)
+	assert.Equal(t, "1", wdv)
+
+	sessions.Remove(sessionId)
+	queue.Release()
+}
+
 func TestParseGgrHost(t *testing.T) {
 	h := parseGgrHost("some-host.example.com:4444")
 	assert.Equal(t, h.Name, "some-host.example.com")

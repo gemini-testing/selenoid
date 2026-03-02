@@ -1,6 +1,6 @@
 module github.com/aerokube/selenoid
 
-go 1.22
+go 1.26
 
 require (
 	github.com/aerokube/ggr v0.0.0-20240420103110-fc913c480489
@@ -9,7 +9,7 @@ require (
 	github.com/docker/go-connections v0.5.0
 	github.com/docker/go-units v0.5.0
 	github.com/google/uuid v1.6.0
-	github.com/gorilla/websocket v1.5.1
+	github.com/gorilla/websocket v1.5.3
 	github.com/imdario/mergo v0.3.15
 	github.com/mafredri/cdp v0.34.1
 	github.com/pkg/errors v0.9.1
@@ -28,6 +28,7 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
+	github.com/klauspost/compress v1.18.4 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/term v0.5.0 // indirect
 	github.com/morikuni/aec v1.0.0 // indirect

@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/aerokube/selenoid/info"
+	"github.com/aerokube/selenoid/wsdriver"
 
 	"github.com/aerokube/selenoid/event"
 	"github.com/aerokube/selenoid/jsonerror"
@@ -375,7 +376,7 @@ func create(w http.ResponseWriter, r *http.Request) {
 				event.FileCreated(createdFile)
 			}
 		}
-		event.SessionStopped(event.StoppedSession{e})
+		event.SessionStopped(event.StoppedSession{Event: e})
 	}
 	sess.Cancel = cancelAndRenameFiles
 	sessions.Put(s.ID, sess)
@@ -433,6 +434,8 @@ func processBody(input []byte, host string) ([]byte, string, error) {
 					if c, ok := raw.(map[string]interface{}); ok {
 						sessionId = v["sessionId"].(string)
 						c["se:cdp"] = fmt.Sprintf("ws://%s/devtools/%s/", host, sessionId)
+						c["se:wsdriver"] = fmt.Sprintf("ws://%s/wsdriver/%s/", host, sessionId)
+						c["se:wsdriverVersion"] = "1"
 						if rbv, ok := c["browserVersion"]; ok {
 							if bv, ok := rbv.(string); ok {
 								c["se:cdpVersion"] = bv
@@ -823,6 +826,34 @@ func status(w http.ResponseWriter, _ *http.Request) {
 func welcome(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(fmt.Sprintf("You are using Selenoid %s!", gitRevision)))
+}
+
+func wsdriverRoute(w http.ResponseWriter, r *http.Request) {
+	sid, _ := splitRequestPath(r.URL.Path)
+	sess, ok := sessions.Get(sid)
+	if ok {
+		var sessionUrl = request{r}.session(sid).url()
+		var isSessionAliveFn = func() bool {
+			if !sessions.Ensure(sid, sess) {
+				return false
+			}
+			select {
+			case <-sess.TimeoutCh:
+			default:
+				close(sess.TimeoutCh)
+			}
+			requestId := serial()
+			sess.TimeoutCh = onTimeout(sess.Timeout, func() {
+				request{r}.session(sid).Delete(requestId)
+			})
+			return true
+		}
+
+		wsdriver.HandleConnection(w, r, sessionUrl, isSessionAliveFn)
+	} else {
+		jsonerror.InvalidSessionID(fmt.Errorf("unknown session %s", sid)).Encode(w)
+		log.Printf("[%d] [SESSION_NOT_FOUND] [%s]", serial(), sid)
+	}
 }
 
 func onTimeout(t time.Duration, f func()) chan struct{} {

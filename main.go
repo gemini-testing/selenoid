@@ -17,16 +17,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/aerokube/selenoid/info"
-	"github.com/docker/docker/api"
-
 	ggr "github.com/aerokube/ggr/config"
 	"github.com/aerokube/selenoid/config"
+	"github.com/aerokube/selenoid/info"
 	"github.com/aerokube/selenoid/jsonerror"
 	"github.com/aerokube/selenoid/protect"
 	"github.com/aerokube/selenoid/service"
 	"github.com/aerokube/selenoid/session"
 	"github.com/aerokube/selenoid/upload"
+	"github.com/docker/docker/api"
 	"github.com/docker/docker/client"
 	"github.com/pkg/errors"
 	"golang.org/x/net/websocket"
@@ -360,7 +359,7 @@ func deleteFileIfExists(requestId uint64, w http.ResponseWriter, r *http.Request
 }
 
 var paths = struct {
-	Video, VNC, Logs, Devtools, Download, Clipboard, File, Ping, Status, Error, WdHub, Welcome string
+	Video, VNC, Logs, Devtools, Download, Clipboard, File, Ping, Status, Error, WdHub, WsDriver, Welcome string
 }{
 	Video:     "/video/",
 	VNC:       "/vnc/",
@@ -373,6 +372,7 @@ var paths = struct {
 	Ping:      "/ping",
 	Error:     "/error",
 	WdHub:     "/wd/hub",
+	WsDriver:  "/wsdriver/",
 	Welcome:   "/",
 }
 
@@ -400,6 +400,7 @@ func handler() http.Handler {
 	root.HandleFunc(paths.Clipboard, reverseProxy(func(sess *session.Session) string { return sess.HostPort.Clipboard }, ReverseProxyOpts{status: "CLIPBOARD"}))
 	root.HandleFunc(paths.Devtools, reverseProxy(func(sess *session.Session) string { return sess.HostPort.Devtools }, ReverseProxyOpts{status: "DEVTOOLS"}))
 	root.HandleFunc(seleniumPaths.ProxySession, reverseProxy(func(sess *session.Session) string { return sess.HostPort.BiDi }, ReverseProxyOpts{status: "BIDI", useOriginalPath: true}))
+	root.HandleFunc(paths.WsDriver, wsdriverRoute)
 	if enableFileUpload {
 		root.HandleFunc(paths.File, fileUpload)
 	}
