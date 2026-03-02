@@ -43,7 +43,7 @@ func UnknownError(err error) *SeleniumError {
 func (se *SeleniumError) Encode(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(se.Status)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"value": map[string]string{
 			"error":   se.Name,
 			"message": se.Err.Error(),

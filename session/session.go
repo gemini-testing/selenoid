@@ -110,6 +110,13 @@ func NewMap() *Map {
 	return &Map{m: make(map[string]*Session)}
 }
 
+// Ensure - synchronous check session is still alive
+func (m *Map) Ensure(k string, v *Session) bool {
+	m.l.RLock()
+	defer m.l.RUnlock()
+	return m.m[k] == v
+}
+
 // Get - synchronous get session
 func (m *Map) Get(k string) (*Session, bool) {
 	m.l.RLock()
