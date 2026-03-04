@@ -640,6 +640,28 @@ func reverseProxy(hostFn func(sess *session.Session) string, opts ReverseProxyOp
 			sess.TimeoutCh = onTimeout(sess.Timeout, func() {
 				request{r}.session(sid).Delete(requestId)
 			})
+			webSocketsDoneChannel := make(chan struct{})
+			// Launch goroutine to update timeout timer once in "timeout / 2"
+			// It will keep session, as long as cdp/vnc connection is established
+			go func() {
+				ticker := time.NewTicker(sess.Timeout / 2)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ticker.C:
+						select {
+						case <-sess.TimeoutCh:
+						default:
+							close(sess.TimeoutCh)
+						}
+						sess.TimeoutCh = onTimeout(sess.Timeout, func() {
+							request{r}.session(sid).Delete(requestId)
+						})
+					case <-webSocketsDoneChannel:
+						return
+					}
+				}
+			}()
 			(&httputil.ReverseProxy{
 				Director: func(r *http.Request) {
 					r.URL.Scheme = "http"
@@ -649,6 +671,9 @@ func reverseProxy(hostFn func(sess *session.Session) string, opts ReverseProxyOp
 				},
 				ErrorHandler: defaultErrorHandler(requestId),
 			}).ServeHTTP(w, r)
+
+			// Stops updating session timeout timer, when request connection is closed
+			close(webSocketsDoneChannel)
 		} else {
 			jsonerror.InvalidSessionID(fmt.Errorf("unknown session %s", sid)).Encode(w)
 			log.Printf("[%d] [SESSION_NOT_FOUND] [%s]", requestId, sid)
