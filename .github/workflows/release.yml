@@ -10,7 +10,7 @@ concurrency:
 
 jobs:
   golang:
-    runs-on: self-hosted-arc
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
 
