@@ -391,6 +391,7 @@ func removeSelenoidOptions(input []byte) []byte {
 	if raw, ok := body["desiredCapabilities"]; ok {
 		if dc, ok := raw.(map[string]interface{}); ok {
 			delete(dc, selenoidOptions)
+			removeSafariBrowserNameForIOSNativeApp(dc)
 		}
 	}
 	if raw, ok := body["capabilities"]; ok {
@@ -398,6 +399,7 @@ func removeSelenoidOptions(input []byte) []byte {
 			if raw, ok := c["alwaysMatch"]; ok {
 				if am, ok := raw.(map[string]interface{}); ok {
 					delete(am, selenoidOptions)
+					removeSafariBrowserNameForIOSNativeApp(am)
 				}
 			}
 			if raw, ok := c["firstMatch"]; ok {
@@ -405,6 +407,7 @@ func removeSelenoidOptions(input []byte) []byte {
 					for _, raw := range fm {
 						if c, ok := raw.(map[string]interface{}); ok {
 							delete(c, selenoidOptions)
+							removeSafariBrowserNameForIOSNativeApp(c)
 						}
 					}
 				}
@@ -413,6 +416,20 @@ func removeSelenoidOptions(input []byte) []byte {
 	}
 	ret, _ := json.Marshal(body)
 	return ret
+}
+
+func removeSafariBrowserNameForIOSNativeApp(caps map[string]interface{}) {
+	browserName, _ := caps["browserName"].(string)
+	if browserName != "safari" {
+		return
+	}
+	if _, ok := caps["appium:bundleId"]; ok {
+		delete(caps, "browserName")
+		return
+	}
+	if _, ok := caps["appium:app"]; ok {
+		delete(caps, "browserName")
+	}
 }
 
 func processBody(input []byte, host string) ([]byte, string, error) {
