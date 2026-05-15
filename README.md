@@ -6,8 +6,6 @@
 [![Docker Pulls](https://img.shields.io/docker/pulls/aerokube/selenoid.svg)](https://hub.docker.com/r/aerokube/selenoid)
 [![StackOverflow Tag](https://img.shields.io/badge/stackoverflow-selenoid-orange.svg?style=flat)](https://stackoverflow.com/questions/tagged/selenoid)
 
-**UNMAINTAINED**. Consider https://aerokube.com/moon/latest as alternative.
-
 Selenoid is a powerful implementation of [Selenium](http://github.com/SeleniumHQ/selenium) hub using [Docker](https://docker.com/) containers to launch browsers.
 ![Selenoid Animation](docs/img/selenoid-animation.gif)
 
