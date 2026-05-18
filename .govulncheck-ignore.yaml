@@ -1,0 +1,7 @@
+# .govulncheck-ignore.yaml
+
+GO-2026-4887:
+  reason: "Does not affect Selenoid as we don't use AuthZ plugins (see SECURITY.md)"
+
+GO-2026-4883:
+  reason: "Does not affect Selenoid as we don't use Docker plugins (see SECURITY.md)"

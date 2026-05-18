@@ -7,4 +7,6 @@ CGO_ENABLED=1 go test -tags 's3 metadata' -v -race -coverprofile=coverage.txt -c
 CGO_ENABLED=1 go test -tags 's3 metadata' -v -race -coverprofile=coverage.txt -covermode=atomic -coverpkg github.com/aerokube/selenoid/wsdriver ./wsdriver
 
 go install golang.org/x/vuln/cmd/govulncheck@latest
-"$(go env GOPATH)"/bin/govulncheck -tags production ./...
+go install github.com/tk-l2002/govulncheck-wrapper@latest
+export IGNORE_GOVULNCHECK=.govulncheck-ignore.yaml
+"$(go env GOPATH)"/bin/govulncheck-wrapper -tags production ./...
