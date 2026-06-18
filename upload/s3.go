@@ -4,13 +4,16 @@
 package upload
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"mime"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aerokube/selenoid/event"
@@ -18,8 +21,38 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	awssession "github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/klauspost/compress/zstd"
 	"github.com/pkg/errors"
 )
+
+const (
+	logFileType = "log"
+
+	compressionNone = "none"
+	compressionZstd = "zstd"
+)
+
+var zstdWriterPool = sync.Pool{
+	New: func() any {
+		w, _ := zstd.NewWriter(nil)
+		return w
+	},
+}
+
+func compressZstd(r io.Reader) ([]byte, error) {
+	enc := zstdWriterPool.Get().(*zstd.Encoder)
+	defer zstdWriterPool.Put(enc)
+
+	var buf bytes.Buffer
+	enc.Reset(&buf)
+	if _, err := io.Copy(enc, r); err != nil {
+		return nil, err
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
 
 func init() {
 	s3 := &S3Uploader{}
@@ -34,6 +67,7 @@ func init() {
 	flag.StringVar(&(s3.IncludeFiles), "s3-include-files", "", "Pattern used to match and include files")
 	flag.StringVar(&(s3.ExcludeFiles), "s3-exclude-files", "", "Pattern used to match and exclude files")
 	flag.BoolVar(&(s3.ForcePathStyle), "s3-force-path-style", false, "Force path-style addressing for file upload")
+	flag.StringVar(&(s3.Compression), "s3-compression", compressionNone, "Compression for logs before upload: \"none\" or \"zstd\"")
 	AddUploader(s3)
 }
 
@@ -49,12 +83,20 @@ type S3Uploader struct {
 	IncludeFiles      string
 	ExcludeFiles      string
 	ForcePathStyle    bool
+	Compression       string
 
 	manager *s3manager.Uploader
 }
 
 func (s3 *S3Uploader) Init() {
 	if s3.Endpoint != "" {
+		switch s3.Compression {
+		case "", compressionNone:
+			s3.Compression = compressionNone
+		case compressionZstd:
+		default:
+			log.Fatalf("[-] [INIT] [Failed to initialize S3 support: unsupported compression %q, allowed values are %q and %q]", s3.Compression, compressionNone, compressionZstd)
+		}
 		config := &aws.Config{
 			Endpoint:         aws.String(s3.Endpoint),
 			Region:           aws.String(s3.Region),
@@ -67,7 +109,7 @@ func (s3 *S3Uploader) Init() {
 		if err != nil {
 			log.Fatalf("[-] [INIT] [Failed to initialize S3 support: %v]", err)
 		}
-		log.Printf("[-] [INIT] [Initialized S3 support: endpoint = %s, region = %s, bucketName = %s, accessKey = %s, keyPattern = %s, includeFiles = %s, excludeFiles = %s, forcePathStyle = %t]", s3.Endpoint, s3.Region, s3.BucketName, s3.AccessKey, s3.KeyPattern, s3.IncludeFiles, s3.ExcludeFiles, s3.ForcePathStyle)
+		log.Printf("[-] [INIT] [Initialized S3 support: endpoint = %s, region = %s, bucketName = %s, accessKey = %s, keyPattern = %s, includeFiles = %s, excludeFiles = %s, forcePathStyle = %t, compression = %s]", s3.Endpoint, s3.Region, s3.BucketName, s3.AccessKey, s3.KeyPattern, s3.IncludeFiles, s3.ExcludeFiles, s3.ForcePathStyle, s3.Compression)
 		s3.manager = s3manager.NewUploader(sess)
 	}
 }
@@ -85,21 +127,31 @@ func (s3 *S3Uploader) Upload(createdFile event.CreatedFile) (bool, error) {
 		}
 		key := GetS3Key(s3.KeyPattern, createdFile)
 		file, err := os.Open(filename)
-		defer file.Close()
 		if err != nil {
 			return false, fmt.Errorf("failed to open file %s: %v", filename, err)
 		}
+		defer file.Close()
 		uploadInput := &s3manager.UploadInput{
-			Bucket: aws.String(s3.BucketName),
-			Key:    aws.String(key),
+			Bucket: new(s3.BucketName),
+			Key:    new(key),
 			Body:   file,
 		}
-		contentType := mime.TypeByExtension(filepath.Ext(filename))
-		if contentType != "" {
-			uploadInput.ContentType = aws.String(contentType)
+		if s3.Compression == compressionZstd && createdFile.Type == logFileType {
+			compressed, err := compressZstd(file)
+			if err != nil {
+				return false, fmt.Errorf("failed to compress log file %s: %v", filename, err)
+			}
+			uploadInput.Body = bytes.NewReader(compressed)
+			uploadInput.ContentType = new("text/plain; charset=utf-8")
+			uploadInput.ContentEncoding = new("zstd")
+		} else {
+			contentType := mime.TypeByExtension(filepath.Ext(filename))
+			if contentType != "" {
+				uploadInput.ContentType = new(contentType)
+			}
 		}
 		if s3.ReducedRedundancy {
-			uploadInput.StorageClass = aws.String("REDUCED_REDUNDANCY")
+			uploadInput.StorageClass = new("REDUCED_REDUNDANCY")
 		}
 		_, err = s3.manager.Upload(uploadInput)
 		if err != nil {
