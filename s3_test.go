@@ -4,7 +4,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +18,7 @@ import (
 	"github.com/aerokube/selenoid/event"
 	"github.com/aerokube/selenoid/session"
 	"github.com/aerokube/selenoid/upload"
+	"github.com/klauspost/compress/zstd"
 	assert "github.com/stretchr/testify/require"
 )
 
@@ -77,6 +80,134 @@ func TestS3Uploader(t *testing.T) {
 	uploaded, err := uploader.Upload(input)
 	assert.NoError(t, err)
 	assert.True(t, uploaded)
+}
+
+type capturedUpload struct {
+	contentType     string
+	contentEncoding string
+	body            []byte
+}
+
+func newCapturingUploader(t *testing.T, compression string) (*upload.S3Uploader, *capturedUpload, func()) {
+	t.Helper()
+	captured := &capturedUpload{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			body, _ := io.ReadAll(r.Body)
+			captured.body = body
+			captured.contentType = r.Header.Get("Content-Type")
+			captured.contentEncoding = r.Header.Get("Content-Encoding")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	uploader := &upload.S3Uploader{
+		Endpoint:       srv.URL,
+		Region:         "us-west-1",
+		AccessKey:      "some-access-key",
+		SecretKey:      "some-secret-key",
+		BucketName:     "test-bucket",
+		KeyPattern:     "$fileName",
+		ForcePathStyle: true,
+		KeepFiles:      true,
+		Compression:    compression,
+	}
+	uploader.Init()
+	return uploader, captured, srv.Close
+}
+
+func logFile(t *testing.T, content string) string {
+	t.Helper()
+	f, err := os.CreateTemp("", "some-file-*.log")
+	assert.NoError(t, err)
+	_, err = f.WriteString(content)
+	assert.NoError(t, err)
+	assert.NoError(t, f.Close())
+	t.Cleanup(func() { os.Remove(f.Name()) })
+	return f.Name()
+}
+
+func TestS3UploadZstdCompressesLogs(t *testing.T) {
+	uploader, captured, closeSrv := newCapturingUploader(t, "zstd")
+	defer closeSrv()
+
+	const content = "hello selenoid log content that should be compressed"
+	input := event.CreatedFile{
+		Event: event.Event{RequestId: 1, SessionId: "some-session-id", Session: testSession},
+		Name:  logFile(t, content),
+		Type:  "log",
+	}
+
+	uploaded, err := uploader.Upload(input)
+	assert.NoError(t, err)
+	assert.True(t, uploaded)
+
+	assert.Equal(t, "text/plain; charset=utf-8", captured.contentType)
+	assert.Equal(t, "zstd", captured.contentEncoding)
+	assert.NotEqual(t, []byte(content), captured.body)
+
+	dec, err := zstd.NewReader(bytes.NewReader(captured.body))
+	assert.NoError(t, err)
+	defer dec.Close()
+	decompressed, err := io.ReadAll(dec)
+	assert.NoError(t, err)
+	assert.Equal(t, content, string(decompressed))
+}
+
+func TestS3UploadZstdOnlyCompressesLogType(t *testing.T) {
+	uploader, captured, closeSrv := newCapturingUploader(t, "zstd")
+	defer closeSrv()
+
+	const content = "this is a video artifact, not a log"
+	input := event.CreatedFile{
+		Event: event.Event{RequestId: 2, SessionId: "some-session-id", Session: testSession},
+		Name:  logFile(t, content),
+		Type:  "video",
+	}
+
+	uploaded, err := uploader.Upload(input)
+	assert.NoError(t, err)
+	assert.True(t, uploaded)
+
+	assert.Empty(t, captured.contentEncoding)
+	assert.Equal(t, content, string(captured.body))
+}
+
+func TestS3UploadNoneLeavesLogsUncompressed(t *testing.T) {
+	uploader, captured, closeSrv := newCapturingUploader(t, "none")
+	defer closeSrv()
+
+	const content = "plain uncompressed log content"
+	input := event.CreatedFile{
+		Event: event.Event{RequestId: 3, SessionId: "some-session-id", Session: testSession},
+		Name:  logFile(t, content),
+		Type:  "log",
+	}
+
+	uploaded, err := uploader.Upload(input)
+	assert.NoError(t, err)
+	assert.True(t, uploaded)
+
+	assert.Empty(t, captured.contentEncoding)
+	assert.Equal(t, content, string(captured.body))
+}
+
+func TestS3UploadEmptyCompressionDefaultsToNone(t *testing.T) {
+	uploader, captured, closeSrv := newCapturingUploader(t, "")
+	defer closeSrv()
+
+	const content = "log content with default compression setting"
+	input := event.CreatedFile{
+		Event: event.Event{RequestId: 4, SessionId: "some-session-id", Session: testSession},
+		Name:  logFile(t, content),
+		Type:  "log",
+	}
+
+	uploaded, err := uploader.Upload(input)
+	assert.NoError(t, err)
+	assert.True(t, uploaded)
+
+	assert.Empty(t, captured.contentEncoding)
+	assert.Equal(t, content, string(captured.body))
 }
 
 func TestGetKey(t *testing.T) {
