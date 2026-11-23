@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"net/url"
 	"sync"
 	"time"
@@ -84,6 +85,8 @@ type Session struct {
 	HostPort  HostPort
 	Origin    string
 	Cancel    func()
+	Lifetime  context.Context
+	End       context.CancelFunc
 	Timeout   time.Duration
 	TimeoutCh chan struct{}
 	Started   time.Time

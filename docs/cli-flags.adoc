@@ -3,6 +3,8 @@
 The following flags are supported by `selenoid` command:
 
 ----
+-reuse-android
+    Start one Android Chrome emulator before accepting sessions (requires -limit 1)
 -capture-driver-logs
     Whether to add driver process logs to Selenoid output
 -conf string
@@ -96,3 +98,41 @@ The following flags are supported by `selenoid` command when compiled with S3 su
 -s3-secret-key string
     S3 secret key
 ```
+=== Reusing an Android Chrome emulator
+
+Run Selenoid with `-reuse-android -limit 1` and a Docker browser configuration
+with one `chrome` version. Set the startup timeout to cover Android boot.
+For example, for an image running Appium on port 4723:
+
+[source,json]
+----
+{
+  "chrome": {
+    "versions": {
+      "phone-101.1": {
+        "image": "your-android-chrome-image",
+        "port": "4723",
+        "path": "/wd/hub",
+        "env": ["VERBOSE=1"]
+      }
+    }
+  }
+}
+----
+
+The image must contain ADB on PATH, one connected Android emulator and
+`com.android.chrome`. Selenoid waits for Appium readiness and Android boot
+before listening. Each WebDriver session starts Chrome on that emulator.
+At startup and after Appium confirms session deletion, Selenoid clears the
+Chrome package data. Android shared storage and other applications persist.
+Use the instance for one trusted test workload.
+
+Set container environment variables in the browser configuration before
+startup. A session can request matching variables. Session-specific changes to
+the container, including video, VNC and custom screen size, are unsupported.
+Session log files contain output from the current session. Live container log
+streaming is disabled in this mode.
+
+If creation, deletion or Chrome cleanup leaves the session state uncertain,
+Selenoid exits and removes the container. Restart Selenoid to recover or to
+load changes to the browser configuration.

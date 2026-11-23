@@ -207,6 +207,16 @@ func create(w http.ResponseWriter, r *http.Request) {
 	}
 	u := startedService.Url
 	cancel := startedService.Cancel
+	created := false
+	defer func() {
+		if !created {
+			if warmAndroid != nil {
+				warmAndroid.Fail(errors.New("could not confirm Appium session creation"))
+			}
+			cancel()
+			queue.Drop()
+		}
+	}()
 	host := "localhost"
 	if startedService.Origin != "" {
 		host = startedService.Origin
@@ -235,7 +245,7 @@ func create(w http.ResponseWriter, r *http.Request) {
 			switch ctx.Err() {
 			case context.DeadlineExceeded:
 				log.Printf("[%d] [SESSION_ATTEMPT_TIMED_OUT] [%s]", requestId, newSessionAttemptTimeout)
-				if i < retryCount {
+				if warmAndroid == nil && i < retryCount {
 					continue
 				}
 				err := fmt.Errorf("New session attempts retry count exceeded")
@@ -244,8 +254,6 @@ func create(w http.ResponseWriter, r *http.Request) {
 			case context.Canceled:
 				log.Printf("[%d] [CLIENT_DISCONNECTED] [%s] [%s] [%.2fs]", requestId, user, remote, info.SecondsSince(sessionStartTime))
 			}
-			queue.Drop()
-			cancel()
 			return
 		default:
 		}
@@ -255,11 +263,10 @@ func create(w http.ResponseWriter, r *http.Request) {
 			}
 			log.Printf("[%d] [SESSION_FAILED] [%s] [%s]", requestId, u.String(), err)
 			jsonerror.SessionNotCreated(err).Encode(w)
-			queue.Drop()
-			cancel()
 			return
 		}
-		if rsp.StatusCode == http.StatusNotFound && u.Path == "" {
+		if warmAndroid == nil && rsp.StatusCode == http.StatusNotFound && u.Path == "" {
+			_ = rsp.Body.Close()
 			u.Path = "/wd/hub"
 			continue
 		}
@@ -291,16 +298,12 @@ func create(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			log.Printf("[%d] [ERROR_READING_RESPONSE] [%v]", requestId, err)
-			queue.Drop()
-			cancel()
 			w.WriteHeader(resp.StatusCode)
 			return
 		}
 		newBody, sessionId, err := processBody(body, r.Host)
 		if err != nil {
 			log.Printf("[%d] [ERROR_PROCESSING_RESPONSE] [%v]", requestId, err)
-			queue.Drop()
-			cancel()
 			w.WriteHeader(resp.StatusCode)
 			return
 		}
@@ -312,8 +315,6 @@ func create(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.ID == "" {
 		log.Printf("[%d] [SESSION_FAILED] [%s] [%s]", requestId, u.String(), resp.Status)
-		queue.Drop()
-		cancel()
 		return
 	}
 	sess := &session.Session{
@@ -379,8 +380,12 @@ func create(w http.ResponseWriter, r *http.Request) {
 		event.SessionStopped(event.StoppedSession{Event: e})
 	}
 	sess.Cancel = cancelAndRenameFiles
+	if warmAndroid != nil {
+		sess.Lifetime, sess.End = context.WithCancel(context.Background())
+	}
 	sessions.Put(s.ID, sess)
 	queue.Create()
+	created = true
 	log.Printf("[%d] [SESSION_CREATED] [%s] [%d] [%.2fs]", requestId, s.ID, i, info.SecondsSince(sessionStartTime))
 }
 
@@ -568,6 +573,13 @@ func generateRandomFileName(extension string) string {
 const vendorPrefix = "aerokube"
 
 func proxy(w http.ResponseWriter, r *http.Request) {
+	if warmAndroid != nil && r.Method == http.MethodDelete {
+		parts := strings.Split(strings.TrimSuffix(r.URL.Path, slash), slash)
+		if len(parts) == 3 {
+			deleteWarmSession(w, parts[2])
+			return
+		}
+	}
 	done := make(chan func())
 	go func() {
 		(<-done)()
@@ -594,6 +606,10 @@ func proxy(w http.ResponseWriter, r *http.Request) {
 				}
 				sess.Lock.Lock()
 				defer sess.Lock.Unlock()
+				if sess.Lifetime != nil && sess.Lifetime.Err() != nil {
+					r.URL.Path = paths.Error
+					return
+				}
 				select {
 				case <-sess.TimeoutCh:
 				default:
@@ -652,14 +668,31 @@ func reverseProxy(hostFn func(sess *session.Session) string, opts ReverseProxyOp
 
 		sess, ok := sessions.Get(sid)
 		if ok {
-			select {
-			case <-sess.TimeoutCh:
-			default:
-				close(sess.TimeoutCh)
+			if sess.Lifetime != nil {
+				ctx, cancel := context.WithCancel(r.Context())
+				stop := context.AfterFunc(sess.Lifetime, cancel)
+				defer stop()
+				defer cancel()
+				r = r.WithContext(ctx)
 			}
-			sess.TimeoutCh = onTimeout(sess.Timeout, func() {
-				request{r}.session(sid).Delete(requestId)
-			})
+			renew := func() bool {
+				sess.Lock.Lock()
+				defer sess.Lock.Unlock()
+				if !sessions.Ensure(sid, sess) || (sess.Lifetime != nil && sess.Lifetime.Err() != nil) {
+					return false
+				}
+				select {
+				case <-sess.TimeoutCh:
+				default:
+					close(sess.TimeoutCh)
+				}
+				sess.TimeoutCh = onTimeout(sess.Timeout, func() { request{r}.session(sid).Delete(requestId) })
+				return true
+			}
+			if !renew() {
+				jsonerror.InvalidSessionID(errors.New("session ended")).Encode(w)
+				return
+			}
 			webSocketsDoneChannel := make(chan struct{})
 			// Launch goroutine to update timeout timer once in "timeout / 2"
 			// It will keep session, as long as cdp/vnc connection is established
@@ -669,14 +702,9 @@ func reverseProxy(hostFn func(sess *session.Session) string, opts ReverseProxyOp
 				for {
 					select {
 					case <-ticker.C:
-						select {
-						case <-sess.TimeoutCh:
-						default:
-							close(sess.TimeoutCh)
+						if !renew() {
+							return
 						}
-						sess.TimeoutCh = onTimeout(sess.Timeout, func() {
-							request{r}.session(sid).Delete(requestId)
-						})
 					case <-webSocketsDoneChannel:
 						return
 					}
@@ -836,7 +864,7 @@ func streamLogs(wsconn *websocket.Conn) {
 	requestId := serial()
 	sid, _ := splitRequestPath(wsconn.Request().URL.Path)
 	sess, ok := sessions.Get(sid)
-	if ok && sess.Container != nil {
+	if ok && sess.Container != nil && sess.Lifetime == nil {
 		log.Printf("[%d] [CONTAINER_LOGS] [%s]", requestId, sess.Container.ID)
 		r, err := cli.ContainerLogs(wsconn.Request().Context(), sess.Container.ID, container.LogsOptions{
 			ShowStdout: true,
@@ -859,6 +887,9 @@ func streamLogs(wsconn *websocket.Conn) {
 func status(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	ready := limit > sessions.Len()
+	if warmAndroid != nil {
+		ready = queue.Used() == 0 && queue.Pending() == 0
+	}
 	_ = json.NewEncoder(w).Encode(
 		map[string]interface{}{
 			"value": map[string]interface{}{
@@ -879,7 +910,9 @@ func wsdriverRoute(w http.ResponseWriter, r *http.Request) {
 	if ok {
 		var sessionUrl = request{r}.session(sid).url()
 		var isSessionAliveFn = func() bool {
-			if !sessions.Ensure(sid, sess) {
+			sess.Lock.Lock()
+			defer sess.Lock.Unlock()
+			if !sessions.Ensure(sid, sess) || (sess.Lifetime != nil && sess.Lifetime.Err() != nil) {
 				return false
 			}
 			select {
