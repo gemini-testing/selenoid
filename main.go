@@ -34,8 +34,8 @@ import (
 var (
 	hostname                  string
 	disableDocker             bool
-	reuseAndroid              bool
-	warmAndroid               *service.WarmAndroid
+	startupBrowser            session.Caps
+	reusableContainer         *service.ReusableContainer
 	disableQueue              bool
 	enableFileUpload          bool
 	listen                    string
@@ -75,7 +75,6 @@ var (
 func init() {
 	var mem service.MemLimit
 	var cpu service.CpuLimit
-	flag.BoolVar(&reuseAndroid, "reuse-android", false, "Keep one Android Chrome emulator running between sessions (requires -limit 1)")
 	flag.BoolVar(&disableDocker, "disable-docker", false, "Disable docker support")
 	flag.BoolVar(&disableQueue, "disable-queue", false, "Disable wait queue")
 	flag.BoolVar(&enableFileUpload, "enable-file-upload", false, "File upload support")
@@ -123,9 +122,12 @@ func init() {
 	if err != nil {
 		log.Fatalf("[-] [INIT] [%s: %v]", os.Args[0], err)
 	}
+	if !disableDocker && limit == 1 {
+		startupBrowser = conf.SingleDockerBrowser()
+	}
 	onSIGHUP(func() {
-		if reuseAndroid {
-			log.Print("[-] [CONFIG_RELOAD_SKIPPED] [Restart to reconfigure the warm emulator]")
+		if startupBrowser.Name != "" {
+			log.Print("[-] [CONFIG_RELOAD_SKIPPED] [Restart to reconfigure the reusable container]")
 			return
 		}
 		err := conf.Load(confPath, logConfPath)
@@ -398,7 +400,7 @@ func handler() http.Handler {
 	root.HandleFunc(paths.Status, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Content-Type", "application/json")
 		state := conf.State(sessions, limit, queue.Queued(), queue.Pending())
-		if warmAndroid != nil {
+		if reusableContainer != nil {
 			state.Used = max(state.Used, queue.Used())
 		}
 		_ = json.NewEncoder(w).Encode(state)
@@ -439,17 +441,14 @@ func run() error {
 	if cli != nil {
 		defer cli.Close()
 	}
-	if reuseAndroid {
-		if limit != 1 || disableDocker {
-			return fmt.Errorf("-reuse-android requires Docker and -limit 1")
-		}
+	if startupBrowser.Name != "" {
 		var err error
-		warmAndroid, err = service.StartWarmAndroid(ctx, fail, manager.(*service.DefaultManager))
+		reusableContainer, err = service.StartReusableContainer(ctx, fail, manager.(*service.DefaultManager), startupBrowser)
 		if err != nil {
-			return fmt.Errorf("starting warm Android: %w", err)
+			return fmt.Errorf("starting reusable container: %w", err)
 		}
-		defer warmAndroid.Close()
-		manager = warmAndroid
+		defer reusableContainer.Close()
+		manager = reusableContainer
 	}
 	log.Printf("[-] [INIT] [Listening on %s]", listen)
 	server := &http.Server{Addr: listen, Handler: handler()}

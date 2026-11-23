@@ -134,6 +134,9 @@ func (d *Docker) start(ctx context.Context, ready func(*url.URL) error) (*Starte
 		},
 		ExtraHosts: getExtraHosts(d.Service, d.Caps),
 	}
+	if d.Service.KVM && !d.Privileged {
+		hostConfig.Devices = []ctr.DeviceMapping{{PathOnHost: "/dev/kvm", PathInContainer: "/dev/kvm", CgroupPermissions: "rw"}}
+	}
 	hostConfig.PublishAllPorts = d.Service.PublishAllPorts
 	if len(d.Caps.DNSServers) > 0 {
 		hostConfig.DNS = d.Caps.DNSServers

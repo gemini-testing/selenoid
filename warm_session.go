@@ -13,8 +13,8 @@ import (
 	"github.com/aerokube/selenoid/jsonerror"
 )
 
-// Retain the slot until Appium has ended the session and Android has cleared Chrome.
-func deleteWarmSession(w http.ResponseWriter, id string) {
+// Retain the slot until the driver is ready for the next session.
+func deleteReusableSession(w http.ResponseWriter, id string) {
 	s, ok := sessions.Get(id)
 	if !ok {
 		jsonerror.InvalidSessionID(errors.New("unknown session")).Encode(w)
@@ -48,13 +48,13 @@ func deleteWarmSession(w http.ResponseWriter, id string) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint.String(), nil)
 	if err == nil {
 		req.Host = s.Origin
-		err = endAppiumSession(req)
+		err = endWebDriverSession(req)
 	}
 	if err == nil {
-		err = warmAndroid.ResetChrome(ctx)
+		err = reusableContainer.PrepareNextSession(ctx)
 	}
 	if err != nil {
-		warmAndroid.Fail(err)
+		reusableContainer.Fail(err)
 		jsonerror.UnknownError(err).Encode(w)
 		return
 	}
@@ -62,10 +62,10 @@ func deleteWarmSession(w http.ResponseWriter, id string) {
 	io.WriteString(w, `{"value":null}`)
 }
 
-func endAppiumSession(req *http.Request) error {
+func endWebDriverSession(req *http.Request) error {
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("delete Appium session: %w", err)
+		return fmt.Errorf("delete WebDriver session: %w", err)
 	}
 	defer resp.Body.Close()
 	var result struct {
@@ -74,7 +74,7 @@ func endAppiumSession(req *http.Request) error {
 	}
 	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&result) != nil ||
 		result.Status != 0 || string(result.Value) != "null" {
-		return fmt.Errorf("Appium did not confirm session deletion (HTTP %d)", resp.StatusCode)
+		return fmt.Errorf("WebDriver did not confirm session deletion (HTTP %d)", resp.StatusCode)
 	}
 	return nil
 }
