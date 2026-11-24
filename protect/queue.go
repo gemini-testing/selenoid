@@ -58,7 +58,8 @@ func (q *Queue) Protect(next http.HandlerFunc) http.HandlerFunc {
 			select {
 			case <-r.Context().Done():
 				<-q.queued
-				log.Printf("[-] [CLIENT_DISCONNECTED] [%s] [%s] [%s]", user, remote, time.Since(s))
+				log.Printf("[-] [QUEUED_REQUEST_CANCELED] [%s] [%s] [%s]", user, remote, time.Since(s))
+				jsonerror.ServiceUnavailable(errors.New("request canceled while waiting for a free slot")).Encode(w)
 				return
 			case q.limit <- struct{}{}:
 				// Do nothing
@@ -70,6 +71,9 @@ func (q *Queue) Protect(next http.HandlerFunc) http.HandlerFunc {
 		next.ServeHTTP(w, r)
 	}
 }
+
+// HasCapacity reports whether a new request can be admitted immediately.
+func (q *Queue) HasCapacity() bool { return len(q.limit) < cap(q.limit) }
 
 // Used - get created sessions
 func (q *Queue) Used() int {

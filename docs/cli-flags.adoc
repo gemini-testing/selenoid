@@ -35,6 +35,8 @@ The following flags are supported by `selenoid` command:
     Containers memory limit e.g. 128m or 1g
 -retry-count int
     New session attempts retry count (default 1)
+-reuse-containers
+    Start and reuse one Docker container per slot (default false)
 -save-all-logs
     Whether to save all logs without considering capabilities
 -service-startup-timeout duration
@@ -96,14 +98,27 @@ The following flags are supported by `selenoid` command when compiled with S3 su
 -s3-secret-key string
     S3 secret key
 ```
-=== Reusing one WebDriver container
+=== Reusing WebDriver containers
 
-With `-limit 1` and exactly one Docker image (one browser and version) in
-`browsers.json`, Selenoid starts the container before listening for requests.
-The driver must report readiness at `<path>/status` and support sequential
-sessions in the same process. Each POST creates a new WebDriver session.
-DELETE ends that session. Selenoid keeps the container until shutdown.
-Other configurations use the on-demand startup path.
+By default Selenoid starts a container when a session is requested and removes
+it when the session ends. Enable the pool at startup:
+
+[source,bash]
+----
+selenoid -conf browsers.json -reuse-containers -limit 2
+----
+
+With this command Selenoid starts two containers in parallel and waits for both
+WebDriver endpoints to report readiness at `<path>/status` before listening.
+The pool requires Docker, a positive `-limit`, and exactly one browser with
+one version and one Docker image in `browsers.json`. An invalid configuration
+causes a startup error. If a slot fails to start, Selenoid cleans up the pool
+and exits.
+
+Each active session has exclusive use of one container. Each POST creates a
+new WebDriver session. DELETE ends that session and returns the prepared
+container to the pool. The driver must support sequential sessions. Selenoid
+removes the containers on shutdown.
 
 For an Android Chrome emulator, set `platformName` to `Android`. Selenoid
 waits for Android boot and clears `com.android.chrome` at startup and after
@@ -137,6 +152,7 @@ to the container, including video, VNC and custom screen size, are unsupported.
 Session log files contain output from the current session. Live container log
 streaming is disabled for reused containers. Use one trusted workload per instance.
 
-If session creation, deletion or preparation for the next session fails,
-Selenoid exits and removes the container. Restart it to recover or load new
-browser settings.
+If session creation, deletion or preparation for reuse fails, Selenoid replaces
+the affected container before returning its slot. If replacement fails, Selenoid
+shuts down the pool and exits with an error. Restart Selenoid to load changes
+to the pool configuration.

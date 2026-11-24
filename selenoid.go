@@ -210,10 +210,10 @@ func create(w http.ResponseWriter, r *http.Request) {
 	created := false
 	defer func() {
 		if !created {
-			if reusableContainer != nil {
-				reusableContainer.Fail(errors.New("could not confirm WebDriver session creation"))
-			}
 			cancel()
+			if startedService.ReleaseContainer != nil {
+				_ = startedService.ReleaseContainer(errors.New("could not confirm WebDriver session creation"))
+			}
 			queue.Drop()
 		}
 	}()
@@ -245,7 +245,7 @@ func create(w http.ResponseWriter, r *http.Request) {
 			switch ctx.Err() {
 			case context.DeadlineExceeded:
 				log.Printf("[%d] [SESSION_ATTEMPT_TIMED_OUT] [%s]", requestId, newSessionAttemptTimeout)
-				if reusableContainer == nil && i < retryCount {
+				if !reuseContainers && i < retryCount {
 					continue
 				}
 				err := fmt.Errorf("New session attempts retry count exceeded")
@@ -265,7 +265,7 @@ func create(w http.ResponseWriter, r *http.Request) {
 			jsonerror.SessionNotCreated(err).Encode(w)
 			return
 		}
-		if reusableContainer == nil && rsp.StatusCode == http.StatusNotFound && u.Path == "" {
+		if !reuseContainers && rsp.StatusCode == http.StatusNotFound && u.Path == "" {
 			_ = rsp.Body.Close()
 			u.Path = "/wd/hub"
 			continue
@@ -380,7 +380,8 @@ func create(w http.ResponseWriter, r *http.Request) {
 		event.SessionStopped(event.StoppedSession{Event: e})
 	}
 	sess.Cancel = cancelAndRenameFiles
-	if reusableContainer != nil {
+	if reuseContainers {
+		sess.ReleaseContainer = startedService.ReleaseContainer
 		sess.Lifetime, sess.End = context.WithCancel(context.Background())
 	}
 	sessions.Put(s.ID, sess)
@@ -573,7 +574,7 @@ func generateRandomFileName(extension string) string {
 const vendorPrefix = "aerokube"
 
 func proxy(w http.ResponseWriter, r *http.Request) {
-	if reusableContainer != nil && r.Method == http.MethodDelete {
+	if reuseContainers && r.Method == http.MethodDelete {
 		parts := strings.Split(strings.TrimSuffix(r.URL.Path, slash), slash)
 		if len(parts) == 3 {
 			deleteReusableSession(w, parts[2])
@@ -887,8 +888,8 @@ func streamLogs(wsconn *websocket.Conn) {
 func status(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	ready := limit > sessions.Len()
-	if reusableContainer != nil {
-		ready = queue.Used() == 0 && queue.Pending() == 0
+	if reuseContainers {
+		ready = queue.HasCapacity()
 	}
 	_ = json.NewEncoder(w).Encode(
 		map[string]interface{}{

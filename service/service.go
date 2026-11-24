@@ -44,11 +44,12 @@ type ServiceBase struct {
 
 // StartedService - all started service properties
 type StartedService struct {
-	Url       *url.URL
-	Container *session.Container
-	HostPort  session.HostPort
-	Origin    string
-	Cancel    func()
+	Url              *url.URL
+	Container        *session.Container
+	HostPort         session.HostPort
+	Origin           string
+	Cancel           func()
+	ReleaseContainer func(error) error
 }
 
 // Starter - interface to create session with cancellation ability

@@ -33,14 +33,7 @@ func deleteReusableSession(w http.ResponseWriter, id string) {
 		close(s.TimeoutCh)
 	}
 	s.Lock.Unlock()
-	defer func() {
-		sessions.Remove(id)
-		s.Cancel()
-		if enableFileUpload {
-			_ = os.RemoveAll(filepath.Join(os.TempDir(), id))
-		}
-		queue.Release()
-	}()
+	defer queue.Release()
 
 	ctx, cancel := context.WithTimeout(context.Background(), sessionDeleteTimeout)
 	defer cancel()
@@ -50,11 +43,12 @@ func deleteReusableSession(w http.ResponseWriter, id string) {
 		req.Host = s.Origin
 		err = endWebDriverSession(req)
 	}
-	if err == nil {
-		err = reusableContainer.PrepareNextSession(ctx)
+	sessions.Remove(id)
+	s.Cancel()
+	if enableFileUpload {
+		_ = os.RemoveAll(filepath.Join(os.TempDir(), id))
 	}
-	if err != nil {
-		reusableContainer.Fail(err)
+	if err := s.ReleaseContainer(err); err != nil {
 		jsonerror.UnknownError(err).Encode(w)
 		return
 	}

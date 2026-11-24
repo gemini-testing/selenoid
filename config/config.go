@@ -133,10 +133,10 @@ func (config *Config) SingleDockerBrowser() session.Caps {
 			break
 		}
 		for version, settings := range browser.Versions {
-			if settings == nil {
+			if name == "" || version == "" || settings == nil {
 				break
 			}
-			if image, ok := settings.Image.(string); ok && image != "" {
+			if image, ok := settings.Image.(string); ok && strings.TrimSpace(image) != "" {
 				return session.Caps{Name: name, Version: version}
 			}
 		}

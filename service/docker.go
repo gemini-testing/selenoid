@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -95,10 +96,12 @@ type portConfig struct {
 func (d *Docker) StartWithCancel() (*StartedService, error) {
 	return d.start(context.Background(), func(u *url.URL) error {
 		return wait(u.String(), d.StartupTimeout)
+	}, func(id string) error {
+		return removeContainer(context.Background(), d.Client, d.RequestId, id, d.Environment)
 	})
 }
 
-func (d *Docker) start(ctx context.Context, ready func(*url.URL) error) (*StartedService, error) {
+func (d *Docker) start(ctx context.Context, ready func(*url.URL) error, remove func(string) error) (*StartedService, error) {
 	portConfig, err := getPortConfig(d.Service, d.Caps, d.Environment)
 	if err != nil {
 		return nil, fmt.Errorf("configuring ports: %v", err)
@@ -178,8 +181,7 @@ func (d *Docker) start(ctx context.Context, ready func(*url.URL) error) (*Starte
 	log.Printf("[%d] [STARTING_CONTAINER] [%s] [%s]", requestId, image, browserContainerId)
 	err = cl.ContainerStart(ctx, browserContainerId, ctr.StartOptions{})
 	if err != nil {
-		removeContainer(context.Background(), cl, requestId, browserContainerId, d.Environment)
-		return nil, fmt.Errorf("start container: %v", err)
+		return nil, errors.Join(fmt.Errorf("start container: %w", err), remove(browserContainerId))
 	}
 	log.Printf("[%d] [CONTAINER_STARTED] [%s] [%s] [%.2fs]", requestId, image, browserContainerId, info.SecondsSince(browserContainerStartTime))
 
@@ -194,8 +196,7 @@ func (d *Docker) start(ctx context.Context, ready func(*url.URL) error) (*Starte
 
 	stat, err := cl.ContainerInspect(ctx, browserContainerId)
 	if err != nil {
-		removeContainer(context.Background(), cl, requestId, browserContainerId, d.Environment)
-		return nil, fmt.Errorf("inspect container %s: %s", browserContainerId, err)
+		return nil, errors.Join(fmt.Errorf("inspect container %s: %w", browserContainerId, err), remove(browserContainerId))
 	}
 	// _, ok := stat.NetworkSettings.Ports[selenium]
 	// if !ok {
@@ -226,8 +227,7 @@ func (d *Docker) start(ctx context.Context, ready func(*url.URL) error) (*Starte
 		if videoContainerId != "" {
 			stopVideoContainer(ctx, cl, requestId, videoContainerId, d.Environment)
 		}
-		removeContainer(context.Background(), cl, requestId, browserContainerId, d.Environment)
-		return nil, fmt.Errorf("wait: %v", err)
+		return nil, errors.Join(fmt.Errorf("wait: %w", err), remove(browserContainerId))
 	}
 	log.Printf("[%d] [SERVICE_STARTED] [%s] [%s] [%.2fs]", requestId, image, browserContainerId, info.SecondsSince(serviceStartTime))
 	log.Printf("[%d] [PROXY_TO] [%s] [%s]", requestId, browserContainerId, u.String())
@@ -255,7 +255,7 @@ func (d *Docker) start(ctx context.Context, ready func(*url.URL) error) (*Starte
 			if videoContainerId != "" {
 				stopVideoContainer(ctx, cl, requestId, videoContainerId, d.Environment)
 			}
-			defer removeContainer(context.Background(), cl, requestId, browserContainerId, d.Environment)
+			defer remove(browserContainerId)
 			if d.LogOutputDir != "" && (d.SaveAllLogs || d.Log) {
 				d.copyLogs(ctx, requestId, browserContainerId, d.LogName, "")
 			}
@@ -605,21 +605,31 @@ func stopVideoContainer(ctx context.Context, cli *client.Client, requestId uint6
 	log.Printf("[%d] [STOPPED_VIDEO_CONTAINER] [%s]", requestId, containerId)
 }
 
-func removeContainer(ctx context.Context, cli *client.Client, requestId uint64, id string, env Environment) {
+func removeContainer(ctx context.Context, cli *client.Client, requestId uint64, id string, env Environment) error {
 	log.Printf("[%d] [REMOVING_CONTAINER] [%s]", requestId, id)
 
 	if env.GracefulShutdown {
 		timeout := 5
-		err := cli.ContainerStop(ctx, id, ctr.StopOptions{Timeout: &timeout})
+		stopCtx := ctx
+		if deadline, ok := ctx.Deadline(); ok {
+			// Reserve time for forced removal if a graceful stop stalls.
+			grace := time.Until(deadline) / 2
+			timeout = min(timeout, max(0, int(grace.Seconds())))
+			var cancel context.CancelFunc
+			stopCtx, cancel = context.WithTimeout(ctx, grace)
+			defer cancel()
+		}
+		err := cli.ContainerStop(stopCtx, id, ctr.StopOptions{Timeout: &timeout})
 		if err != nil {
 			log.Printf("[%d] [FAILED_TO_STOP_CONTAINER] [%s] [%v]", requestId, id, err)
 		}
 	}
 
 	err := cli.ContainerRemove(ctx, id, ctr.RemoveOptions{Force: true, RemoveVolumes: true})
-	if err != nil {
+	if err != nil && !client.IsErrNotFound(err) {
 		log.Printf("[%d] [FAILED_TO_REMOVE_CONTAINER] [%s] [%v]", requestId, id, err)
-		return
+		return err
 	}
 	log.Printf("[%d] [CONTAINER_REMOVED] [%s]", requestId, id)
+	return nil
 }

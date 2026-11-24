@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -27,7 +28,6 @@ import (
 	"github.com/aerokube/selenoid/upload"
 	"github.com/docker/docker/api"
 	"github.com/docker/docker/client"
-	"github.com/pkg/errors"
 	"golang.org/x/net/websocket"
 )
 
@@ -35,7 +35,7 @@ var (
 	hostname                  string
 	disableDocker             bool
 	startupBrowser            session.Caps
-	reusableContainer         *service.ReusableContainer
+	reuseContainers           bool
 	disableQueue              bool
 	enableFileUpload          bool
 	listen                    string
@@ -81,6 +81,7 @@ func init() {
 	flag.StringVar(&listen, "listen", ":4444", "Network address to accept connections")
 	flag.StringVar(&confPath, "conf", "config/browsers.json", "Browsers configuration file")
 	flag.StringVar(&logConfPath, "log-conf", "", "Container logging configuration file")
+	flag.BoolVar(&reuseContainers, "reuse-containers", false, "Start -limit reusable containers from one configured Docker image")
 	flag.IntVar(&limit, "limit", 5, "Simultaneous container runs")
 	flag.IntVar(&retryCount, "retry-count", 1, "New session attempts retry count")
 	flag.DurationVar(&timeout, "timeout", 60*time.Second, "Session idle timeout in time.Duration format")
@@ -116,18 +117,24 @@ func init() {
 	if ggrHostEnv := os.Getenv("GGR_HOST"); ggrHostEnv != "" {
 		ggrHost = parseGgrHost(ggrHostEnv)
 	}
-	queue = protect.New(limit, disableQueue)
 	conf = config.NewConfig()
 	err = conf.Load(confPath, logConfPath)
 	if err != nil {
 		log.Fatalf("[-] [INIT] [%s: %v]", os.Args[0], err)
 	}
-	if !disableDocker && limit == 1 {
+	if reuseContainers {
+		if disableDocker || limit < 1 {
+			log.Fatal("[-] [INIT] [-reuse-containers requires Docker and a positive -limit]")
+		}
 		startupBrowser = conf.SingleDockerBrowser()
+		if startupBrowser.Name == "" {
+			log.Fatal("[-] [INIT] [-reuse-containers requires exactly one browser and version with a Docker image in browsers.json]")
+		}
 	}
+	queue = protect.New(limit, disableQueue)
 	onSIGHUP(func() {
-		if startupBrowser.Name != "" {
-			log.Print("[-] [CONFIG_RELOAD_SKIPPED] [Restart to reconfigure the reusable container]")
+		if reuseContainers {
+			log.Print("[-] [CONFIG_RELOAD_SKIPPED] [Restart to reconfigure the container pool]")
 			return
 		}
 		err := conf.Load(confPath, logConfPath)
@@ -400,7 +407,7 @@ func handler() http.Handler {
 	root.HandleFunc(paths.Status, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Content-Type", "application/json")
 		state := conf.State(sessions, limit, queue.Queued(), queue.Pending())
-		if reusableContainer != nil {
+		if reuseContainers {
 			state.Used = max(state.Used, queue.Used())
 		}
 		_ = json.NewEncoder(w).Encode(state)
@@ -433,7 +440,7 @@ func main() {
 	}
 }
 
-func run() error {
+func run() (runErr error) {
 	signals, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	ctx, fail := context.WithCancelCause(signals)
@@ -441,17 +448,19 @@ func run() error {
 	if cli != nil {
 		defer cli.Close()
 	}
-	if startupBrowser.Name != "" {
-		var err error
-		reusableContainer, err = service.StartReusableContainer(ctx, fail, manager.(*service.DefaultManager), startupBrowser)
+	if reuseContainers {
+		pool, err := service.StartContainerPool(ctx, fail, manager.(*service.DefaultManager), startupBrowser, limit)
 		if err != nil {
-			return fmt.Errorf("starting reusable container: %w", err)
+			return fmt.Errorf("starting container pool: %w", err)
 		}
-		defer reusableContainer.Close()
-		manager = reusableContainer
+		defer func() { runErr = errors.Join(runErr, pool.Close()) }()
+		manager = pool
 	}
 	log.Printf("[-] [INIT] [Listening on %s]", listen)
 	server := &http.Server{Addr: listen, Handler: handler()}
+	if reuseContainers {
+		server.BaseContext = func(net.Listener) context.Context { return ctx }
+	}
 	e := make(chan error, 1)
 	go func() { e <- server.ListenAndServe() }()
 	select {
