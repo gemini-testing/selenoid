@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -27,13 +28,14 @@ import (
 	"github.com/aerokube/selenoid/upload"
 	"github.com/docker/docker/api"
 	"github.com/docker/docker/client"
-	"github.com/pkg/errors"
 	"golang.org/x/net/websocket"
 )
 
 var (
 	hostname                  string
 	disableDocker             bool
+	startupBrowser            session.Caps
+	reuseContainers           bool
 	disableQueue              bool
 	enableFileUpload          bool
 	listen                    string
@@ -79,6 +81,7 @@ func init() {
 	flag.StringVar(&listen, "listen", ":4444", "Network address to accept connections")
 	flag.StringVar(&confPath, "conf", "config/browsers.json", "Browsers configuration file")
 	flag.StringVar(&logConfPath, "log-conf", "", "Container logging configuration file")
+	flag.BoolVar(&reuseContainers, "reuse-containers", false, "Start -limit reusable containers from one configured Docker image")
 	flag.IntVar(&limit, "limit", 5, "Simultaneous container runs")
 	flag.IntVar(&retryCount, "retry-count", 1, "New session attempts retry count")
 	flag.DurationVar(&timeout, "timeout", 60*time.Second, "Session idle timeout in time.Duration format")
@@ -114,13 +117,26 @@ func init() {
 	if ggrHostEnv := os.Getenv("GGR_HOST"); ggrHostEnv != "" {
 		ggrHost = parseGgrHost(ggrHostEnv)
 	}
-	queue = protect.New(limit, disableQueue)
 	conf = config.NewConfig()
 	err = conf.Load(confPath, logConfPath)
 	if err != nil {
 		log.Fatalf("[-] [INIT] [%s: %v]", os.Args[0], err)
 	}
+	if reuseContainers {
+		if disableDocker || limit < 1 {
+			log.Fatal("[-] [INIT] [-reuse-containers requires Docker and a positive -limit]")
+		}
+		startupBrowser = conf.SingleDockerBrowser()
+		if startupBrowser.Name == "" {
+			log.Fatal("[-] [INIT] [-reuse-containers requires exactly one browser and version with a Docker image in browsers.json]")
+		}
+	}
+	queue = protect.New(limit, disableQueue)
 	onSIGHUP(func() {
+		if reuseContainers {
+			log.Print("[-] [CONFIG_RELOAD_SKIPPED] [Restart to reconfigure the container pool]")
+			return
+		}
 		err := conf.Load(confPath, logConfPath)
 		if err != nil {
 			log.Printf("[-] [INIT] [%s: %v]", os.Args[0], err)
@@ -390,7 +406,11 @@ func handler() http.Handler {
 	})
 	root.HandleFunc(paths.Status, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(conf.State(sessions, limit, queue.Queued(), queue.Pending()))
+		state := conf.State(sessions, limit, queue.Queued(), queue.Pending())
+		if reuseContainers {
+			state.Used = max(state.Used, queue.Used())
+		}
+		_ = json.NewEncoder(w).Encode(state)
 	})
 	root.HandleFunc(paths.Ping, ping)
 	root.Handle(paths.VNC, websocket.Handler(vnc))
@@ -415,30 +435,46 @@ func showVersion() {
 
 func main() {
 	log.Printf("[-] [INIT] [Timezone: %s]", time.Local)
-	log.Printf("[-] [INIT] [Listening on %s]", listen)
-
-	stop := make(chan os.Signal)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-
-	server := &http.Server{
-		Addr:    listen,
-		Handler: handler(),
+	if err := run(); err != nil {
+		log.Fatal(err)
 	}
-	e := make(chan error)
-	go func() {
-		e <- server.ListenAndServe()
-	}()
+}
+
+func run() (runErr error) {
+	signals, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	ctx, fail := context.WithCancelCause(signals)
+	defer fail(nil)
+	if cli != nil {
+		defer cli.Close()
+	}
+	if reuseContainers {
+		pool, err := service.StartContainerPool(ctx, fail, manager.(*service.DefaultManager), startupBrowser, limit)
+		if err != nil {
+			return fmt.Errorf("starting container pool: %w", err)
+		}
+		defer func() { runErr = errors.Join(runErr, pool.Close()) }()
+		manager = pool
+	}
+	log.Printf("[-] [INIT] [Listening on %s]", listen)
+	server := &http.Server{Addr: listen, Handler: handler()}
+	if reuseContainers {
+		server.BaseContext = func(net.Listener) context.Context { return ctx }
+	}
+	e := make(chan error, 1)
+	go func() { e <- server.ListenAndServe() }()
 	select {
 	case err := <-e:
-		log.Fatalf("[-] [INIT] [Failed to start: %v]", err)
-	case <-stop:
+		return fmt.Errorf("listen: %w", err)
+	case <-ctx.Done():
 	}
 
 	log.Printf("[-] [SHUTTING_DOWN] [%s]", gracefulPeriod)
-	ctx, cancel := context.WithTimeout(context.Background(), gracefulPeriod)
+	shutdown, cancel := context.WithTimeout(context.Background(), gracefulPeriod)
 	defer cancel()
-	if err := server.Shutdown(ctx); err != nil {
-		log.Fatalf("[-] [SHUTTING_DOWN] [Failed to shut down: %v]", err)
+	if err := server.Shutdown(shutdown); err != nil {
+		_ = server.Close()
+		return fmt.Errorf("HTTP shutdown: %w", err)
 	}
 
 	sessions.Each(func(k string, s *session.Session) {
@@ -447,11 +483,8 @@ func main() {
 		}
 		s.Cancel()
 	})
-
-	if !disableDocker {
-		err := cli.Close()
-		if err != nil {
-			log.Fatalf("[-] [SHUTTING_DOWN] [Error closing Docker client: %v]", err)
-		}
+	if signals.Err() == nil {
+		return context.Cause(ctx)
 	}
+	return nil
 }

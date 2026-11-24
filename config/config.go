@@ -51,6 +51,8 @@ type State struct {
 // Browser configuration
 type Browser struct {
 	Image           interface{}       `json:"image"`
+	PlatformName    string            `json:"platformName,omitempty"`
+	KVM             bool              `json:"kvm,omitempty"`
 	Port            string            `json:"port"`
 	Path            string            `json:"path"`
 	Tmpfs           map[string]string `json:"tmpfs,omitempty"`
@@ -117,6 +119,29 @@ func (config *Config) Load(browsers, containerLogs string) error {
 	config.Browsers, config.ContainerLogs = br, cl
 	config.LastReloadTime = time.Now()
 	return nil
+}
+
+// SingleDockerBrowser returns the fixed environment of a single-image configuration.
+func (config *Config) SingleDockerBrowser() session.Caps {
+	config.lock.RLock()
+	defer config.lock.RUnlock()
+	if len(config.Browsers) != 1 {
+		return session.Caps{}
+	}
+	for name, browser := range config.Browsers {
+		if len(browser.Versions) != 1 {
+			break
+		}
+		for version, settings := range browser.Versions {
+			if name == "" || version == "" || settings == nil {
+				break
+			}
+			if image, ok := settings.Image.(string); ok && strings.TrimSpace(image) != "" {
+				return session.Caps{Name: name, Version: version}
+			}
+		}
+	}
+	return session.Caps{}
 }
 
 // Find - find concrete browser

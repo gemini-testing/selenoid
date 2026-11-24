@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"net/url"
 	"sync"
 	"time"
@@ -77,17 +78,20 @@ type Container struct {
 
 // Session - holds session info
 type Session struct {
-	Quota     string
-	Caps      Caps
-	URL       *url.URL
-	Container *Container
-	HostPort  HostPort
-	Origin    string
-	Cancel    func()
-	Timeout   time.Duration
-	TimeoutCh chan struct{}
-	Started   time.Time
-	Lock      sync.Mutex
+	Quota            string
+	Caps             Caps
+	URL              *url.URL
+	Container        *Container
+	HostPort         HostPort
+	Origin           string
+	Cancel           func()
+	ReleaseContainer func(error) error `json:"-"`
+	Lifetime         context.Context
+	End              context.CancelFunc
+	Timeout          time.Duration
+	TimeoutCh        chan struct{}
+	Started          time.Time
+	Lock             sync.Mutex
 }
 
 // HostPort - hold host-port values for all forwarded ports

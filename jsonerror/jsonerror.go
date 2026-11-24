@@ -36,6 +36,10 @@ func SessionNotCreated(err error) *SeleniumError {
 	return newSeleniumError("session not created", err, http.StatusInternalServerError)
 }
 
+func ServiceUnavailable(err error) *SeleniumError {
+	return newSeleniumError("session not created", err, http.StatusServiceUnavailable)
+}
+
 func UnknownError(err error) *SeleniumError {
 	return newSeleniumError("unknown error", err, http.StatusInternalServerError)
 }
